@@ -126,6 +126,8 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .tagchip{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:4px 9px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ash);cursor:pointer}
 .tagchip.on{border-color:var(--pale);color:var(--bone)}
 .badge.unc{border-color:#5A3A2A;color:#C98A5E}
+.tagchip.empty{opacity:.35}
+.tagcount{font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--rust);align-self:center;margin-left:4px}
 .badge.wt{border-color:var(--line);color:var(--ash)}
 .badge.wt.min{border-color:#2F4A38;color:#7FB894}
 .badge.wt.mid{border-color:#3A4257;color:#8FA0C4}
@@ -905,23 +907,55 @@ function wclass(m){
 function isPrivate(m){ const sp=m?.model_spec||{}; return sp.privacy==="private"||!!sp.capabilities?.supportsE2EE; }
 function isUncensored(m){ const sp=m?.model_spec||{}; const blob=((sp.description||"")+" "+(mid(m)||"")).toLowerCase(); return /uncensor|nsfw|unfiltered|abliterat|heretic|role.?play/.test(blob); }
 function isGenerative(m){ const t=String(m?.type||"").toLowerCase(); return t==="image"||t==="video"; }
-let tagFilter="all";
-function tagMatch(m){ if(tagFilter==="all") return true; const c=caps(m),id=mid(m);
-  switch(tagFilter){ case "reasons":return !!c.supportsReasoning; case "code":return !!c.optimizedForCode; case "tools":return !!c.supportsFunctionCalling; case "web":return !!c.supportsWebSearch; case "min": case "mid": case "heavy": return wclass(m)===tagFilter;
-    case "visual":return !!c.supportsVision;
-    case "generative":return isGenerative(m);
-    case "uncensored":return isUncensored(m);
-    case "audio":return !!c.supportsAudioInput;
-    case "private":return isPrivate(m); default:return family(id)===tagFilter; } }
+/* Chips stack. Weight classes and companies are mutually exclusive per model,
+   so those OR together inside their own group; capability chips AND across groups.
+   "min + heavy + code" therefore means (min OR heavy) AND code, not an empty set. */
+const WCLASS_TAGS=new Set(["min","mid","heavy"]);
+const CAP_TAGS=new Set(["visual","generative","code","uncensored","reasons","tools","web","private","audio"]);
+const CAP_TESTS={
+  visual:m=>!!caps(m).supportsVision,
+  generative:m=>isGenerative(m),
+  code:m=>!!caps(m).optimizedForCode,
+  uncensored:m=>isUncensored(m),
+  reasons:m=>!!caps(m).supportsReasoning,
+  tools:m=>!!caps(m).supportsFunctionCalling,
+  web:m=>{const c=caps(m);return !!(c.supportsWebSearch||c.supportsXSearch);},
+  private:m=>isPrivate(m),
+  audio:m=>!!caps(m).supportsAudioInput
+};
+let tagSel=new Set();
+function tagMatch(m){
+  if(!tagSel.size) return true;
+  const wsel=[...tagSel].filter(t=>WCLASS_TAGS.has(t));
+  if(wsel.length && !wsel.includes(wclass(m))) return false;
+  const csel=[...tagSel].filter(t=>CAP_TAGS.has(t));
+  for(const t of csel){ const fn=CAP_TESTS[t]; if(fn && !fn(m)) return false; }
+  const fsel=[...tagSel].filter(t=>!WCLASS_TAGS.has(t)&&!CAP_TAGS.has(t));
+  if(fsel.length && !fsel.includes(family(mid(m)))) return false;
+  return true;
+}
 function renderTagbar(pool){
   const tb=$("tagbar"); if(!tb) return;
   const fams=[...new Set(pool.map(m=>family(mid(m))))].sort();
   tb.innerHTML=""; tb.hidden=!pool.length;
-  ["all","min","mid","heavy","visual","generative","code","uncensored","reasons","tools","web","private","audio"].concat(fams).forEach(t=>{
-    const b=document.createElement("button"); b.type="button"; b.className="tagchip"+(tagFilter===t?" on":"");
-    b.textContent=t; b.onclick=()=>{ tagFilter=(tagFilter===t?"all":t); renderExperts(true); };
+  const all=document.createElement("button");
+  all.type="button"; all.className="tagchip"+(tagSel.size?"":" on"); all.textContent="all";
+  all.onclick=()=>{ tagSel.clear(); renderExperts(true); };
+  tb.appendChild(all);
+  ["min","mid","heavy","visual","generative","code","uncensored","reasons","tools","web","private","audio"].concat(fams).forEach(t=>{
+    const n=pool.filter(m=>{ const keep=new Set(tagSel); keep.add(t); const save=tagSel; tagSel=keep; const ok=tagMatch(m); tagSel=save; return ok; }).length;
+    const b=document.createElement("button"); b.type="button";
+    b.className="tagchip"+(tagSel.has(t)?" on":"")+(n?"":" empty");
+    b.textContent=tagSel.has(t)?t:`${t} ${n}`;
+    b.onclick=()=>{ tagSel.has(t)?tagSel.delete(t):tagSel.add(t); renderExperts(true); };
     tb.appendChild(b);
   });
+  if(tagSel.size){
+    const shown=pool.filter(tagMatch).length;
+    const s=document.createElement("span"); s.className="tagcount";
+    s.textContent=`${shown} of ${pool.length}`;
+    tb.appendChild(s);
+  }
 }
 function renderExperts(skipDiverse){
   const keep=new Set([...document.querySelectorAll(".pm:checked")].map(b=>b.value));

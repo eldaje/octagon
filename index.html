@@ -289,6 +289,7 @@ button,.lane{text-transform:uppercase;letter-spacing:.04em}
     <div id="bouts" class="lanes" style="margin-bottom:12px">
       <button type="button" class="lane on" data-bout="debate">Debate</button>
       <button type="button" class="lane" data-bout="image">Image</button>
+      <button type="button" class="lane" data-bout="video">Video</button>
       <button type="button" class="lane" data-bout="code">Code</button>
     </div>
     <label id="lane-label">Lane</label>
@@ -459,8 +460,29 @@ const $=id=>document.getElementById(id);
 const out=$("out");
 
 let controller=null, transcript="", brief="", models=[];
-let ATT=null, lastChair=null, runCost=0, imodels=[], bout="debate";
+let ATT=null, lastChair=null, runCost=0, imodels=[], vmodels=[], bout="debate";
 const isImgBout=()=>bout==="image";
+const isVidBout=()=>bout==="video";
+const VQUOTES=new Map();
+const vkind=()=>ATT&&ATT.kind==="image"?"image-to-video":"text-to-video";
+const vpool=()=>vmodels.filter(m=>(m.model_spec?.constraints?.model_type||"text-to-video")===vkind());
+function vParams(m){
+  const c=m.model_spec?.constraints||{};
+  const durs=(c.durations&&c.durations.length?c.durations:["5s"]).slice().sort((a,b)=>parseInt(a)-parseInt(b));
+  const p={duration:durs[0]};
+  if(c.resolutions&&c.resolutions.length) p.resolution=c.resolutions.slice().sort((a,b)=>parseInt(a)-parseInt(b))[0];
+  if(c.aspect_ratios&&c.aspect_ratios.length) p.aspect_ratio=c.aspect_ratios.includes("16:9")?"16:9":c.aspect_ratios[0];
+  if(c.audio_configurable) p.audio=false;
+  return p;
+}
+async function vQuote(id){
+  const m=vmodels.find(x=>mid(x)===id); if(!m) return null;
+  const k=id+JSON.stringify(vParams(m));
+  if(VQUOTES.has(k)) return VQUOTES.get(k);
+  try{ const q=await api("/video/quote",{method:"POST",body:JSON.stringify({model:id,...vParams(m)})});
+    const v=(q&&typeof q.quote==="number")?q.quote:null; VQUOTES.set(k,v); return v;
+  }catch(e){ VQUOTES.set(k,null); return null; }
+}
 const XKEY="oct_strikes";
 const strikes=()=>{ try{ return JSON.parse(localStorage.getItem(XKEY))||{}; }catch{ return {}; } };
 const strike=(id,ok)=>{ try{ const s=strikes();
@@ -737,6 +759,17 @@ const fmt$=v=>v==null?"$?":(v<0.01?"$"+v.toFixed(4):"$"+v.toFixed(2));
 function estimateCost(){
   const el=$("cost-est"); if(!el) return;
   const picked=[...document.querySelectorAll(".pm:checked")].map(b=>b.value);
+  if(isVidBout()){
+    if(!picked.length){ el.textContent=""; return; }
+    el.textContent="Quoting clips...";
+    clearTimeout(window.__vqT);
+    window.__vqT=setTimeout(async()=>{
+      let tot=0,unk=0;
+      for(const id of picked){ const v=await vQuote(id); if(v==null) unk++; else tot+=v; }
+      el.textContent=`Quoted ${fmt$(tot)} for ${picked.length} clip${picked.length>1?"s":""}${unk?` (+${unk} unquoted)`:""} — billed on queue, judged on stills.`;
+    },700);
+    return;
+  }
   if(isImgBout()){
     if(!picked.length){ el.textContent=""; return; }
     let gen=0, tiered=0;
@@ -818,9 +851,14 @@ async function loadExperts(){
       const il=Array.isArray(di)?di:(di.data||di.models||[]);
       imodels=il.filter(m=>mid(m)).sort((a,b)=>mlabel(a).localeCompare(mlabel(b)));
     }catch(e){ imodels=[]; }
+    try{
+      const dv=await api("/models?type=video");
+      const vl=Array.isArray(dv)?dv:(dv.data||dv.models||[]);
+      vmodels=vl.filter(m=>mid(m)).sort((a,b)=>mlabel(a).localeCompare(mlabel(b)));
+    }catch(e){ vmodels=[]; }
     renderExperts();
     const shown=all.filter(eligible).length+(imodels.length?0:0);
-    say(`${shown} of ${all.length} text models fit to sit · ${imodels.length} image contestants — loaded in ${((performance.now()-t0)/1000).toFixed(1)}s.`,"ok");
+    say(`${shown} of ${all.length} text models fit to sit · ${imodels.length} image + ${vmodels.length} video contestants — loaded in ${((performance.now()-t0)/1000).toFixed(1)}s.`,"ok");
   }catch(e){
     $("experts").innerHTML=`<p class="msg err" style="margin:0">${esc(e.message)}</p>`;
     say(e.message,"err");
@@ -829,24 +867,24 @@ async function loadExperts(){
 
 function renderExperts(){
   const keep=new Set([...document.querySelectorAll(".pm:checked")].map(b=>b.value));
-  const pool=isImgBout()?imodels:models;
-  const usable=isImgBout()?pool.slice():pool.filter(eligible);
+  const pool=isImgBout()?imodels:isVidBout()?vpool():models;
+  const usable=(isImgBout()||isVidBout())?pool.slice():pool.filter(eligible);
   $("experts").innerHTML="";
   if(!usable.length){ $("experts").innerHTML='<p class="note" style="margin:0">'+(isImgBout()?"No image models loaded — load the experts first.":"Nothing passes the current filters. Loosen them in settings.")+'</p>'; }
   usable.forEach(m=>{
-    const id=mid(m),ctx=mctx(m),t=isImgBout()?"general":tier(m),c=caps(m),r=c.supportsReasoning,fam=family(id),priv=/^e2ee-/.test(String(id).toLowerCase()),flk=strikes()[id]||0;
+    const id=mid(m),ctx=mctx(m),t=(isImgBout()||isVidBout())?"general":tier(m),c=caps(m),r=c.supportsReasoning,fam=family(id),priv=/^e2ee-/.test(String(id).toLowerCase()),flk=strikes()[id]||0;
     const gen$=m.model_spec?.pricing?.generation?.usd;
     const l=document.createElement("label");
     l.className="expert"+(t!=="general"?" house":"");
     l.innerHTML=`<input type="checkbox" class="pm" value="${esc(id)}" data-label="${esc(mlabel(m))}"${keep.has(id)?" checked":""}>
-      <span><span class="e-name">${esc(mlabel(m))}<span class="badge co">${esc(fam)}</span>${c.supportsVision?'<span class="badge vis">vision</span>':""}${r?'<span class="badge">reasons</span>':""}${c.optimizedForCode?'<span class="badge dim">code</span>':""}${c.supportsFunctionCalling?'<span class="badge dim">tools</span>':""}${c.supportsWebSearch?'<span class="badge dim">web</span>':""}${priv?'<span class="badge vis">private</span>':""}${isImgBout()?`<span class="badge co">${gen$?"$"+gen$+"/img":"tiered"}</span>${m.model_spec?.capabilities?.supportsStyleReferences?'<span class="badge dim">style-ref</span>':""}`:""}${t!=="general"?`<span class="badge dim">${t}</span>`:""}${flk>=2?'<span class="badge strike">flaky</span>':""}</span>
+      <span><span class="e-name">${esc(mlabel(m))}<span class="badge co">${esc(fam)}</span>${c.supportsVision?'<span class="badge vis">vision</span>':""}${r?'<span class="badge">reasons</span>':""}${c.optimizedForCode?'<span class="badge dim">code</span>':""}${c.supportsFunctionCalling?'<span class="badge dim">tools</span>':""}${c.supportsWebSearch?'<span class="badge dim">web</span>':""}${priv?'<span class="badge vis">private</span>':""}${isImgBout()?`<span class="badge co">${gen$?"$"+gen$+"/img":"tiered"}</span>${m.model_spec?.capabilities?.supportsStyleReferences?'<span class="badge dim">style-ref</span>':""}`:""}${isVidBout()?`<span class="badge co">${(m.model_spec?.constraints?.durations||["?"])[0]} · ${((m.model_spec?.constraints?.resolutions||[]).slice().sort((a,b)=>parseInt(a)-parseInt(b))[0])||""}</span>${m.model_spec?.constraints?.audio?'<span class="badge dim">audio</span>':""}`:""}${t!=="general"?`<span class="badge dim">${t}</span>`:""}${flk>=2?'<span class="badge strike">flaky</span>':""}</span>
       <span class="e-id">${esc(id)}${ctx?" · "+(ctx/1000).toFixed(0)+"k":""}</span></span>`;
     $("experts").appendChild(l);
   });
   // the chair list is the same pool, minus whoever is already seated
   const prev=$("chair").value||localStorage.getItem(CKEY);
   $("chair").innerHTML="";
-  const chairPool=isImgBout()?models.filter(m=>caps(m).supportsVision&&eligible(m)):usable;
+  const chairPool=(isImgBout()||isVidBout())?models.filter(m=>caps(m).supportsVision&&eligible(m)):usable;
   chairPool.forEach(m=>{
     const o=document.createElement("option");
     o.value=mid(m); o.textContent=mlabel(m);
@@ -884,7 +922,7 @@ function diversePanel(){
   const chairFam=$("chair").disabled?null:family($("chair").value);
   const skipChair=true;
   const byFam=new Map();
-  (isImgBout()?imodels.slice():models.filter(eligible)).forEach(m=>{
+  (isImgBout()?imodels.slice():isVidBout()?vpool():models.filter(eligible)).forEach(m=>{
     const id=mid(m),fam=family(id);
     if(flaky(id)) return;
     if(chairFam&&fam===chairFam&&skipChair) return;
@@ -918,11 +956,13 @@ $("review").addEventListener("change",estimateCost);
     bout=b.dataset.bout;
     [...document.querySelectorAll("#bouts .lane")].forEach(x=>x.classList.toggle("on",x===b));
     $("q").placeholder = bout==="image" ? "Describe the image every contestant must render..."
+      : bout==="video" ? "Describe the clip every contestant must shoot..."
       : bout==="code" ? "Describe the build or the fix. Contestants deliver working files..."
       : "What goes to every expert...";
     if(models.length||imodels.length) renderExperts();
     estimateCost();
     say(bout==="image" ? "Image bout — the panel is now image models. Attach a reference to steer style-ref contestants."
+      : bout==="video" ? "Video bout — clips cost real money and take minutes. You'll see a quote before anything runs. Attach a photo to switch to image-to-video models."
       : bout==="code" ? "Code bout — contestants deliver files. Preview and zip each entry." : "","");
   };
 });
@@ -1194,6 +1234,132 @@ function buildTally(rankings,answers){
 }
 const tallyText=rows=>rows.map(r=>`Answer ${r.letter}: ${r.pts} pts${r.avg?` (avg rank ${r.avg.toFixed(2)})`:""}`).join("\n");
 
+/* ================= video bout ================= */
+function vidCard(letter,who,url,meta){
+  const d=document.createElement("div"); d.className="res";
+  d.innerHTML=`<div class="res-head"><span class="res-who">${letter?`<span class="letter">${esc(letter)}</span>`:""}${esc(who)}</span>
+    <span class="res-meta">${esc(meta||"")}</span></div>
+    <div class="res-body" style="padding:10px"><video controls playsinline src="${url}" style="width:100%;border-radius:9px;display:block;background:#000"></video>
+    <div class="bar"><button class="ghost dl">Save</button></div></div>`;
+  d.querySelector(".dl").onclick=()=>{ const a=document.createElement("a"); a.href=url; a.download=`octagon-${letter||"clip"}-${who.replace(/[^a-z0-9]+/gi,"-")}.mp4`; a.click(); };
+  out.appendChild(d); return d;
+}
+function vFrame(url){ return new Promise((res,rej)=>{
+  const v=document.createElement("video"); v.muted=true; v.preload="auto"; v.src=url;
+  const to=setTimeout(()=>rej(new Error("frame timeout")),15000);
+  v.onloadedmetadata=()=>{ try{ v.currentTime=Math.min((v.duration||2)/2,4); }catch(e){ clearTimeout(to); rej(e); } };
+  v.onseeked=()=>{ try{ const c=document.createElement("canvas");
+    c.width=v.videoWidth||640; c.height=v.videoHeight||360;
+    c.getContext("2d").drawImage(v,0,0,c.width,c.height);
+    clearTimeout(to); res(c.toDataURL("image/jpeg",0.8)); }catch(e){ clearTimeout(to); rej(e); } };
+  v.onerror=()=>{ clearTimeout(to); rej(new Error("frame extract failed")); };
+});}
+async function videoBout(){
+  const q=$("q").value.trim();
+  const boxes=[...document.querySelectorAll(".pm:checked")];
+  const picked=boxes.map(b=>b.value);
+  if(!q) return say("Describe the clip first.","err");
+  if(!picked.length) return say("Seat at least one video contestant.","err");
+  say("Quoting the bout...");
+  let quoted=0,unq=0;
+  for(const id of picked){ const v=await vQuote(id); if(v==null) unq++; else quoted+=v; }
+  const sig=picked.join()+"|"+q;
+  if(window.__vOK!==sig){
+    window.__vOK=sig;
+    return say(`This bout will cost ~${fmt$(quoted)}${unq?` plus ${unq} unquoted model${unq>1?"s":""}`:""} and takes minutes. Hit Convene again to confirm.`,"warn");
+  }
+  window.__vOK=null;
+  out.innerHTML=""; transcript=""; brief=""; $("after-bar").hidden=true;
+  $("challenge-wrap").hidden=true; lastChair=null; runCost=0;
+  $("run").disabled=true; $("cancel").disabled=false;
+  controller=new AbortController();
+  ringDraw(picked.length); ringCore(false); ringArc(false);
+  const started=new Date(), t0=performance.now(), log=[];
+  const L=(...x)=>log.push(...x);
+  L("=".repeat(72),"OCTAGON — VIDEO BOUT — RUN LOG","=".repeat(72),"",
+    `Time:    ${started.toISOString()}`,`Brief:   ${q}`,`Ring:    ${picked.join(", ")}`,`Quoted:  ~${fmt$(quoted)}`,"");
+  try{
+    rule("Round 01 — Shoots");
+    ringSay("Filming","Clips take minutes, not seconds. The ring waits.");
+    let landed=0; say(`0/${picked.length} clips in — video takes a few minutes.`);
+    const s1=await pool(picked,2,async id=>{
+      const m=vmodels.find(x=>mid(x)===id)||{};
+      const body={model:id,prompt:q.slice(0,2400),...vParams(m)};
+      if(ATT&&ATT.kind==="image"&&vkind()==="image-to-video") body.image_url=ATT.data;
+      const qr=await api("/video/queue",{method:"POST",body:JSON.stringify(body)});
+      const qid=qr.queue_id, dl=qr.download_url;
+      if(!qid) throw new Error("No queue id returned.");
+      const t1=performance.now();
+      let blob=null;
+      for(let i=0;i<120;i++){
+        if(controller.signal.aborted) throw new Error("Cancelled.");
+        await sleep(5000);
+        const res=await fetch(API+"/video/retrieve",{method:"POST",
+          headers:{"Content-Type":"application/json","Authorization":"Bearer "+getKey()},
+          body:JSON.stringify({model:id,queue_id:qid}),signal:controller.signal});
+        const ct=res.headers.get("Content-Type")||"";
+        if(res.ok&&ct.includes("video/")){ blob=await res.blob(); break; }
+        const j=await res.json().catch(()=>({}));
+        if(j.status==="COMPLETED"&&dl){
+          const vr=await fetch(dl);
+          if(vr.ok){ blob=await vr.blob(); try{ fetch(dl,{method:"DELETE"}); }catch(e){} break; }
+        }
+        if(res.status>=400&&res.status!==503&&res.status!==429) throw new Error(j.error||("Retrieve failed ("+res.status+")"));
+      }
+      if(!blob) throw new Error("Timed out waiting for the clip (~10 min).");
+      try{ api("/video/complete",{method:"POST",body:JSON.stringify({model:id,queue_id:qid})}); }catch(e){}
+      const qv=await vQuote(id); if(qv) runCost+=qv;
+      return {model:id,url:URL.createObjectURL(blob),bytes:blob.size,ms:Math.round(performance.now()-t1)};
+    },(r,i)=>{ landed++; strike(picked[i],r.ok); ringNode(i,r.ok?"done":"fail"); say(`${landed}/${picked.length} clips in.`); });
+    if(controller.signal.aborted) throw new Error("Cancelled.");
+    const clips=[];
+    s1.forEach((r,i)=>{
+      if(r.ok){ const letter=LETTERS[clips.length]; clips.push({letter,...r.v}); ringLabel(i,letter);
+        vidCard(letter,boxes[i].dataset.label||r.v.model,r.v.url,`${(r.v.ms/1000).toFixed(0)}s · ${(r.v.bytes/1e6).toFixed(1)} MB · ${r.v.model}`);
+        L(`CLIP ${letter} — ${r.v.model} (${(r.v.ms/1000).toFixed(0)}s, ${(r.v.bytes/1e6).toFixed(1)} MB)`);
+      }else{ const m=r.e?.message||String(r.e);
+        card("",boxes[i].dataset.label||picked[i],m,"dead",picked[i]); L(`--- ${picked[i]} FAILED --- ${m}`); }
+    });
+    if(!clips.length) throw new Error("No contestant delivered a clip.");
+    let rows=null;
+    if(clips.length>1){
+      rule("Round 02 — Blind judging (mid-clip stills)");
+      ringArc(true); ringSay("Judging","Vision models rank one still per clip. Crude, blind, fair.");
+      const frames=[];
+      for(const c of clips){ try{ frames.push({letter:c.letter,data:await vFrame(c.url)}); }catch(e){} }
+      if(frames.length===clips.length){
+        const judges=[]; const seen=new Set();
+        models.filter(m=>caps(m).supportsVision&&!m.model_spec?.offline).sort((a,b)=>mctx(b)-mctx(a))
+          .forEach(m=>{ const f=family(mid(m)); if(judges.length<3&&!seen.has(f)&&!flaky(mid(m))){ judges.push(mid(m)); seen.add(f); } });
+        const jp=`You are judging a video contest by a single mid-clip still from each entry. The brief was:\n${q}\n\nYou will see ${frames.length} stills labelled ${frames.map(f=>f.letter).join(", ")} in that order. Judge fitness to the brief and craft. Reply one line:\nRANKING: X > Y > Z (best first), then one sentence on why the winner won.`;
+        const jc=[{type:"text",text:jp},...frames.map(f=>({type:"image_url",image_url:{url:f.data}}))];
+        let jl=0; say(`0/${judges.length} judges in.`);
+        const s2=await pool(judges,2,async m=>({model:m,...await ask(m,[{role:"user",content:jc}])}),
+          (r)=>{ jl++; if(r.ok&&r.v.usage) runCost+=costOf(r.v.model,r.v.usage)||0; say(`${jl}/${judges.length} judges in.`); });
+        ringArc(false);
+        const rankings=[];
+        s2.forEach(r=>{ if(!r.ok) return;
+          const o=parseRanking(r.v.content,clips.map(x=>x.letter)); if(o) rankings.push(o);
+          card("",`Judge — ${r.v.model}`,r.v.content,"rev",`${(r.v.ms/1000).toFixed(1)}s`); L(`JUDGE ${r.v.model}:`,r.v.content,""); });
+        rows=buildTally(rankings,clips);
+        if(rows){ const wr=clips.find(x=>x.letter===rows[0].letter);
+          card("",`Verdict — ${wr.model} takes the crown`,tallyText(rows),"chairres","Borda, still-frame");
+          L("### VERDICT","",tallyText(rows),""); }
+      }else say("Couldn't pull stills from every clip — crown it with your own eyes.","warn");
+    }
+    L("=".repeat(72),`RUN COST ~${fmt$(runCost)} · END ${((performance.now()-t0)/1000).toFixed(1)}s`,"=".repeat(72));
+    transcript=log.join("\n"); runLog=log;
+    saveRun(started,q,transcript,runCost);
+    if($("cost-est")) $("cost-est").textContent=`Actual bout cost ~${fmt$(runCost)}.`;
+    $("export").disabled=$("copy-run").disabled=false;
+    ringSay("Bout complete", rows?`${clips.find(x=>x.letter===rows[0].letter).model} wins.`:"Clips in. Crown one.");
+    say(`Bout done in ${((performance.now()-t0)/1000).toFixed(1)}s · ~${fmt$(runCost)}.`,"ok");
+  }catch(e){
+    const m=e?.message||String(e);
+    ringSay("Bout failed",m); say(m,m==="Cancelled."?"warn":"err");
+  }finally{ controller=null; $("run").disabled=false; $("cancel").disabled=true; }
+}
+
 /* ================= image bout ================= */
 function imgCard(letter,who,b64,meta){
   const d=document.createElement("div");
@@ -1348,6 +1514,7 @@ const CODE_PREFIX="You are a contestant in a code bout. Deliver a complete, work
 /* ================= run ================= */
 async function convene(){
   if(isImgBout()) return imageBout();
+  if(isVidBout()) return videoBout();
   const q=$("q").value.trim();
   const boxes=[...document.querySelectorAll(".pm:checked")];
   const picked=boxes.map(b=>b.value);

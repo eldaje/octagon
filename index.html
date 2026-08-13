@@ -1221,6 +1221,9 @@ function chairPrompt(q,answers,reviews,tally,motm){
 - Add anything the whole panel missed.
 
 Return a clear, self-contained final answer. Do not refer to letters, answers, reviewers, rankings, the panel, or any API mechanics — the reader sees only your answer. You may note genuine disagreement or uncertainty where it materially affects the answer.`;
+  const artifactRule = (bout==="code")
+    ? `\n\nARTIFACT REQUIREMENT (this is a build bout, so your ruling must ship):\n- Your verdict is not finished until it contains the actual deliverable, not a description of it.\n- If you are naming a winner, reproduce that winner\u0027s file(s) verbatim.\n- If you are synthesising, output the merged, working file(s) you are ruling for \u2014 you own the result, so it must run as written.\n- Emit every file exactly as:\nFILE: relative/path\n\`\`\`\n...file contents...\n\`\`\`\n- Web apps: prefer a single self-contained index.html. Put your reasoning before the file blocks, never inside them.`
+    : "";
   return `You are the Chair of a panel of experts. Produce the single best answer to the user's question, using the panel's work as evidence rather than as content to be averaged.
 
 THE USER ASKED:
@@ -1230,7 +1233,7 @@ PANEL ANSWERS (anonymised):
 
 ${ab}${rb}
 
-${task}`;
+${task}${artifactRule}`;
 }
 
 /* ================= tally ================= */
@@ -1690,6 +1693,30 @@ function card(letter,who,body,cls,meta){
   d.querySelector(".res-head").onclick=()=>d.classList.toggle("clps");
   out.appendChild(d);
 }
+function chairFileBar(verdict){
+  try{
+    const files=(typeof parseFiles==="function")?parseFiles(verdict||""):[];
+    if(!files.length) return false;
+    const bar=document.createElement("div"); bar.className="winbar";
+    const tag=document.createElement("span"); tag.className="wtag"; tag.textContent="Chair\u0027s ruling";
+    const who=document.createElement("span"); who.className="wwho"; who.textContent=`Synthesised build \u00b7 ${files.length} file${files.length>1?"s":""}`;
+    bar.appendChild(tag); bar.appendChild(who);
+    files.forEach(f=>{ const b=document.createElement("button"); b.className="ghost"; b.textContent=`Download ${f.path.split("/").pop()||"file"}`;
+      b.onclick=()=>{ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([f.text],{type:"text/plain"})); a.download=f.path.split("/").pop()||"file.txt"; a.click(); }; bar.appendChild(b); });
+    const zb=document.createElement("button"); zb.className="ghost"; zb.textContent=`Ruling zip (${files.length})`;
+    zb.onclick=()=>{ const a=document.createElement("a"); a.href=URL.createObjectURL(zipStore(files)); a.download="octagon-chair-ruling.zip"; a.click(); };
+    bar.appendChild(zb);
+    const html=files.find(f=>/(^|\/)index\.html$/i.test(f.path))||files.find(f=>/\.html?$/i.test(f.path));
+    if(html){ const pb=document.createElement("button"); pb.className="ghost"; pb.textContent="Preview"; let fr=null;
+      pb.onclick=()=>{ if(fr){ fr.remove(); fr=null; pb.textContent="Preview"; return; }
+        fr=document.createElement("iframe"); fr.setAttribute("sandbox","allow-scripts");
+        fr.style.cssText="width:100%;height:430px;border:1px solid var(--line);border-radius:10px;background:#fff;margin-top:9px";
+        fr.srcdoc=html.text; bar.after(fr); pb.textContent="Close preview"; };
+      bar.appendChild(pb); }
+    out.appendChild(bar);
+    return true;
+  }catch(e){ return false; }
+}
 function winnerBar(verdict){
   try{
     if(!lastRun||!lastRun.answers||!lastRun.answers.length) return;
@@ -1806,6 +1833,7 @@ async function runChair(){
     const fin=await ask(chair,[{role:"user",content:uContent(brief)}]);
     if(fin.usage) runCost+=costOf(chair,fin.usage)||0;
     card("",`Chair — ${chair}`,fin.content,"chairres",`${(fin.ms/1000).toFixed(1)}s${motm?" · Man of the Match":""}`);
+    chairFileBar(fin.content);
     winnerBar(fin.content);
     ringSay("Chaired",motm?"One answer named, unedited.":"One answer, adjudicated.");
     say(`Chaired in ${((performance.now()-t0)/1000).toFixed(1)}s.`,"ok");

@@ -59,10 +59,15 @@ body{
 .hero-cap{position:absolute;left:0;right:0;bottom:0;padding:16px 18px;z-index:2;font-family:var(--mono);font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--ash)}
 
 /* ---------- the ring: signature ---------- */
-.ring-stage{display:flex;align-items:center;gap:24px;flex-wrap:wrap;margin-bottom:26px}
+.ring-stage{display:flex;flex-direction:column;align-items:center;text-align:center;gap:18px;margin:0 auto 34px}
 .ring-wrap{flex:0 0 auto;position:relative}
-#ring{display:block;width:168px;height:168px}
-.ring-read{flex:1 1 220px;min-width:0}
+#ring{display:block;width:clamp(240px,42vw,380px);height:clamp(240px,42vw,380px);margin:0 auto}
+.node-label{font-size:8px}
+.core-label{font-size:7px}
+.winbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;border:1px solid var(--rust);background:#150C08;border-radius:10px;padding:11px 13px;margin:11px 0 0}
+.winbar .wtag{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--rust)}
+.winbar .wwho{font-size:13px;color:var(--bone);font-weight:600}
+.ring-read{max-width:62ch;min-width:0}
 .ring-title{font-family:var(--display);font-size:19px;font-weight:700;letter-spacing:-.01em;margin:0 0 5px}
 .ring-sub{font-size:13.5px;color:var(--ash);line-height:1.55}
 .node-ring{fill:none;stroke:var(--line);stroke-width:1.5}
@@ -1685,6 +1690,36 @@ function card(letter,who,body,cls,meta){
   d.querySelector(".res-head").onclick=()=>d.classList.toggle("clps");
   out.appendChild(d);
 }
+function winnerBar(verdict){
+  try{
+    if(!lastRun||!lastRun.answers||!lastRun.answers.length) return;
+    const letters=lastRun.answers.map(a=>a.letter);
+    let hit=null;
+    const pats=[/\banswer\s+([A-Z])\b/i,/\bwinner[^A-Z]{0,20}\b([A-Z])\b/i,/\b([A-Z])\s+(?:wins|is the winner|takes it)/i];
+    for(const p of pats){ const m=verdict.match(p); if(m&&letters.includes(m[1].toUpperCase())){ hit=m[1].toUpperCase(); break; } }
+    if(!hit){ const counts=letters.map(L=>({L,n:(verdict.match(new RegExp("\\b"+L+"\\b","g"))||[]).length})).sort((a,b)=>b.n-a.n); if(counts[0]&&counts[0].n>0&&(!counts[1]||counts[0].n>counts[1].n)) hit=counts[0].L; }
+    if(!hit) return;
+    const win=lastRun.answers.find(a=>a.letter===hit);
+    if(!win) return;
+    const bar=document.createElement("div"); bar.className="winbar";
+    const tag=document.createElement("span"); tag.className="wtag"; tag.textContent="Chair picked";
+    const who=document.createElement("span"); who.className="wwho"; who.textContent=`${win.letter} \u2014 ${win.model}`;
+    bar.appendChild(tag); bar.appendChild(who);
+    const files=(typeof parseFiles==="function")?parseFiles(win.content||""):[];
+    if(files.length){
+      files.forEach(f=>{ const b=document.createElement("button"); b.className="ghost"; b.textContent=`Download ${f.path.split("/").pop()||"file"}`;
+        b.onclick=()=>{ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([f.text],{type:"text/plain"})); a.download=f.path.split("/").pop()||"file.txt"; a.click(); }; bar.appendChild(b); });
+      const zb=document.createElement("button"); zb.className="ghost"; zb.textContent=`Winning zip (${files.length})`;
+      zb.onclick=()=>{ const a=document.createElement("a"); a.href=URL.createObjectURL(zipStore(files)); a.download=`octagon-winner-${win.letter}.zip`; a.click(); };
+      bar.appendChild(zb);
+    }else{
+      const cb=document.createElement("button"); cb.className="ghost"; cb.textContent="Copy winning answer";
+      cb.onclick=()=>navigator.clipboard.writeText(win.content||"");
+      bar.appendChild(cb);
+    }
+    out.appendChild(bar);
+  }catch(e){}
+}
 function tallyCard(rows,parsed,total){
   const d=document.createElement("div"); d.className="res";
   d.innerHTML=`<div class="res-head"><span class="res-who">Aggregate peer ranking</span>
@@ -1771,6 +1806,7 @@ async function runChair(){
     const fin=await ask(chair,[{role:"user",content:uContent(brief)}]);
     if(fin.usage) runCost+=costOf(chair,fin.usage)||0;
     card("",`Chair — ${chair}`,fin.content,"chairres",`${(fin.ms/1000).toFixed(1)}s${motm?" · Man of the Match":""}`);
+    winnerBar(fin.content);
     ringSay("Chaired",motm?"One answer named, unedited.":"One answer, adjudicated.");
     say(`Chaired in ${((performance.now()-t0)/1000).toFixed(1)}s.`,"ok");
     runLog.push("=".repeat(72),`CHAIR (${chair}, ${(fin.ms/1000).toFixed(1)}s)${motm?" — Man of the Match":""}`,"=".repeat(72),"",fin.content,"");

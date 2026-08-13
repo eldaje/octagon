@@ -886,7 +886,22 @@ async function loadExperts(){
 /* ----- model tagging: every model gets a weight class, so a 3B is never
    silently benchmarked against a 550B behemoth. Price per 1M output tokens is
    the only signal present on 100% of models (ids encode size on <30%). ----- */
-function wclass(m){ const o=m?.model_spec?.pricing?.output?.usd; if(o==null) return "mid"; if(o<=1.5) return "min"; if(o<=15) return "mid"; return "heavy"; }
+function wclass(m){
+  const p=m?.model_spec?.pricing||{};
+  // text models price per 1M output tokens (0.13 -> 225, a 1700x spread)
+  const o=p.output?.usd;
+  if(o!=null) return o<=1.5?"min":o<=15?"mid":"heavy";
+  // image models price per generation instead (0.01 -> 0.29)
+  const g=p.generation?.usd;
+  if(g!=null) return g<=0.03?"min":g<=0.08?"mid":"heavy";
+  // video models carry no pricing here at all, so class them by top resolution
+  const res=m?.model_spec?.constraints?.resolutions;
+  if(Array.isArray(res)&&res.length){
+    const top=Math.max(...res.map(r=>parseInt(r)||0));
+    if(top) return top<=480?"min":top<=720?"mid":"heavy";
+  }
+  return null; // no honest signal — badge nothing rather than imply a class
+}
 function isPrivate(m){ const sp=m?.model_spec||{}; return sp.privacy==="private"||!!sp.capabilities?.supportsE2EE; }
 function isUncensored(m){ const sp=m?.model_spec||{}; const blob=((sp.description||"")+" "+(mid(m)||"")).toLowerCase(); return /uncensor|nsfw|unfiltered|abliterat|heretic|role.?play/.test(blob); }
 function isGenerative(m){ const t=String(m?.type||"").toLowerCase(); return t==="image"||t==="video"; }
@@ -922,7 +937,7 @@ function renderExperts(skipDiverse){
     const l=document.createElement("label");
     l.className="expert"+(t!=="general"?" house":"");
     l.innerHTML=`<input type="checkbox" class="pm" value="${esc(id)}" data-label="${esc(mlabel(m))}"${keep.has(id)?" checked":""}>
-      <span><span class="e-name">${esc(mlabel(m))}<span class="badge co">${esc(fam)}</span>${c.supportsVision?'<span class="badge vis">vision</span>':""}${r?'<span class="badge">reasons</span>':""}${c.optimizedForCode?'<span class="badge dim">code</span>':""}${c.supportsFunctionCalling?'<span class="badge dim">tools</span>':""}${c.supportsWebSearch?'<span class="badge dim">web</span>':""}${priv?'<span class="badge vis">private</span>':""}${unc?'<span class="badge unc">uncensored</span>':""}<span class="badge wt ${wc}">${wc}</span>${isImgBout()?`<span class="badge co">${gen$?"$"+gen$+"/img":"tiered"}</span>${m.model_spec?.capabilities?.supportsStyleReferences?'<span class="badge dim">style-ref</span>':""}`:""}${isVidBout()?`<span class="badge co">${(m.model_spec?.constraints?.durations||["?"])[0]} · ${((m.model_spec?.constraints?.resolutions||[]).slice().sort((a,b)=>parseInt(a)-parseInt(b))[0])||""}</span>${m.model_spec?.constraints?.audio?'<span class="badge dim">audio</span>':""}`:""}${t!=="general"?`<span class="badge dim">${t}</span>`:""}${flk>=2?'<span class="badge strike">flaky</span>':""}</span>
+      <span><span class="e-name">${esc(mlabel(m))}<span class="badge co">${esc(fam)}</span>${c.supportsVision?'<span class="badge vis">vision</span>':""}${r?'<span class="badge">reasons</span>':""}${c.optimizedForCode?'<span class="badge dim">code</span>':""}${c.supportsFunctionCalling?'<span class="badge dim">tools</span>':""}${c.supportsWebSearch?'<span class="badge dim">web</span>':""}${priv?'<span class="badge vis">private</span>':""}${unc?'<span class="badge unc">uncensored</span>':""}${wc?`<span class="badge wt ${wc}">${wc}</span>`:""}${isImgBout()?`<span class="badge co">${gen$?"$"+gen$+"/img":"tiered"}</span>${m.model_spec?.capabilities?.supportsStyleReferences?'<span class="badge dim">style-ref</span>':""}`:""}${isVidBout()?`<span class="badge co">${(m.model_spec?.constraints?.durations||["?"])[0]} · ${((m.model_spec?.constraints?.resolutions||[]).slice().sort((a,b)=>parseInt(a)-parseInt(b))[0])||""}</span>${m.model_spec?.constraints?.audio?'<span class="badge dim">audio</span>':""}`:""}${t!=="general"?`<span class="badge dim">${t}</span>`:""}${flk>=2?'<span class="badge strike">flaky</span>':""}</span>
       <span class="e-id">${esc(id)}${ctx?" · "+(ctx/1000).toFixed(0)+"k":""}</span></span>`;
     $("experts").appendChild(l);
   });

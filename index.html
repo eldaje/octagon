@@ -1498,6 +1498,7 @@ function artifactBar(d,files,letter){
   const zb=document.createElement("button"); zb.className="ghost"; zb.textContent=`Zip (${files.length})`;
   zb.onclick=()=>{ const a=document.createElement("a"); a.href=URL.createObjectURL(zipStore(files)); a.download=`octagon-${letter||"entry"}.zip`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000); };
   bar.appendChild(zb);
+  files.forEach(f=>{ const db=document.createElement("button"); db.className="ghost"; db.textContent=`Download ${f.path.split("/").pop()||"file"}`; db.onclick=()=>{ const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([f.text],{type:"text/plain"})); a.download=f.path.split("/").pop()||"file.txt"; a.click(); }; bar.appendChild(db); });
   const html=files.find(f=>/(^|\/)index\.html$/i.test(f.path))||files.find(f=>/\.html?$/i.test(f.path));
   if(html){
     const pb=document.createElement("button"); pb.className="ghost"; pb.textContent="Preview"; let fr=null;

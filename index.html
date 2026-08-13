@@ -1536,6 +1536,7 @@ function artifactBar(d,files,letter){
 const CODE_PREFIX="You are a contestant in a code bout. Deliver a complete, working artifact — not advice. Output every file exactly as:\nFILE: relative/path\n```\n...file contents...\n```\nWeb apps: prefer a single self-contained index.html. Start with a SUMMARY of at most 3 lines. No other commentary outside the file blocks.";
 
 /* ================= run ================= */
+let imgWarnQ="";
 async function convene(){
   if(isImgBout()) return imageBout();
   if(isVidBout()) return videoBout();
@@ -1547,6 +1548,7 @@ async function convene(){
 
   if(!q) return say("Add a question first.","err");
   if(!picked.length) return say("Seat at least one expert.","err");
+  if(/\b(image|picture|photo|logo|draw|paint|illustration|illustrate|sketch)\b/i.test(q)&&imgWarnQ!==q){ imgWarnQ=q; return say("This brief asks for a picture \u2014 text models can\u0027t render images (a VISION badge means a model can SEE images, not make them). Switch to the IMAGE bout in the top row so real image models compete, or hit Convene again to send it to the text panel anyway.","warn"); }
   
   const L0=lane(); let framed=L0.prefix?`${L0.prefix}\n\n---\n\n${q}`:q;
   if(bout==="code") framed=`${CODE_PREFIX}\n\n---\n\n${framed}`;

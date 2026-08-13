@@ -113,6 +113,13 @@ button:disabled{opacity:.4;cursor:not-allowed}
 .experts{display:grid;grid-template-columns:repeat(auto-fit,minmax(255px,1fr));gap:7px;max-height:330px;overflow:auto;padding-right:3px}
 .expert{display:flex;align-items:center;gap:11px;background:#070504;border:1px solid var(--line);padding:11px 12px;border-radius:10px;cursor:pointer}
 .expert:has(input:checked){border-color:var(--pale);background:#14100C}
+.res-head{cursor:pointer;user-select:none}
+.res.clps>.res-body{display:none}
+.res-head .res-who::before{content:"+ ";color:var(--ash);font-family:var(--mono)}
+.res:not(.clps) .res-head .res-who::before{content:"\2212 "}
+.tagbar{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.tagchip{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:4px 9px;border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ash);cursor:pointer}
+.tagchip.on{border-color:var(--pale);color:var(--bone)}
 .expert input{width:auto;flex:0 0 auto;accent-color:var(--pale)}
 .e-name{font-size:13px;line-height:1.3}
 .e-id{font-family:var(--mono);font-size:10.5px;color:var(--ash);word-break:break-all;margin-top:2px}
@@ -315,6 +322,7 @@ button,.lane{text-transform:uppercase;letter-spacing:.04em}
       <button id="diverse" class="ghost">Diverse</button>
       <button id="clear-sel" class="ghost">Clear</button>
     </div>
+    <div id="tagbar" class="tagbar" hidden></div>
     <div id="experts" class="experts"><p class="note" style="margin:0">Add your key in settings, then load the experts.</p></div>
     <p class="note">One model per vendor family, never the chair's own. In image bouts the ring becomes image models — same rule, different weapons.</p>
   </details>
@@ -865,10 +873,25 @@ async function loadExperts(){
   }
 }
 
-function renderExperts(){
+let tagFilter="all";
+function tagMatch(m){ if(tagFilter==="all") return true; const c=caps(m),id=mid(m);
+  switch(tagFilter){ case "vision":return !!c.supportsVision; case "reasons":return !!c.supportsReasoning; case "code":return !!c.optimizedForCode; case "tools":return !!c.supportsFunctionCalling; case "web":return !!c.supportsWebSearch; case "private":return /^e2ee-/.test(String(id).toLowerCase()); default:return family(id)===tagFilter; } }
+function renderTagbar(pool){
+  const tb=$("tagbar"); if(!tb) return;
+  const fams=[...new Set(pool.map(m=>family(mid(m))))].sort();
+  tb.innerHTML=""; tb.hidden=!pool.length;
+  ["all","vision","reasons","code","tools","web","private"].concat(fams).forEach(t=>{
+    const b=document.createElement("button"); b.type="button"; b.className="tagchip"+(tagFilter===t?" on":"");
+    b.textContent=t; b.onclick=()=>{ tagFilter=(tagFilter===t?"all":t); renderExperts(true); };
+    tb.appendChild(b);
+  });
+}
+function renderExperts(skipDiverse){
   const keep=new Set([...document.querySelectorAll(".pm:checked")].map(b=>b.value));
   const pool=isImgBout()?imodels:isVidBout()?vpool():models;
-  const usable=(isImgBout()||isVidBout())?pool.slice():pool.filter(eligible);
+  let usable=(isImgBout()||isVidBout())?pool.slice():pool.filter(eligible);
+  renderTagbar(usable);
+  usable=usable.filter(tagMatch);
   $("experts").innerHTML="";
   if(!usable.length){ $("experts").innerHTML='<p class="note" style="margin:0">'+(isImgBout()?"No image models loaded — load the experts first.":"Nothing passes the current filters. Loosen them in settings.")+'</p>'; }
   usable.forEach(m=>{
@@ -893,7 +916,7 @@ function renderExperts(){
   $("chair").disabled=!chairPool.length;
   if(prev&&chairPool.some(m=>mid(m)===prev)) $("chair").value=prev;
   syncChairOptions();
-  diversePanel();
+  if(!skipDiverse) diversePanel();
 }
 
 // A model can't answer and judge its own answer, so seated experts are greyed
@@ -1654,9 +1677,10 @@ $("clear-res").onclick=()=>{ out.innerHTML=""; say(""); syncRing(); };
 function rule(t){ const d=document.createElement("div"); d.className="stage-rule"; d.textContent=t; out.appendChild(d); }
 function card(letter,who,body,cls,meta){
   const d=document.createElement("div");
-  d.className="res"+(cls?" "+cls:"");
+  d.className="res clps"+(cls?" "+cls:"");
   d.innerHTML=`<div class="res-head"><span class="res-who">${letter?`<span class="letter">${esc(letter)}</span>`:""}${esc(who)}</span>
     <span class="res-meta">${esc(meta||"")}</span></div><div class="res-body">${esc(body)}</div>`;
+  d.querySelector(".res-head").onclick=()=>d.classList.toggle("clps");
   out.appendChild(d);
 }
 function tallyCard(rows,parsed,total){
